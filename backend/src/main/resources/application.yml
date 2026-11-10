@@ -1,0 +1,47 @@
+spring:
+  application:
+    name: canary-shop
+
+  config:
+    import: optional:file:.env[.properties]
+
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 1
+      connection-timeout: 20000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        default_schema: canary_shop
+        jdbc:
+          time_zone: UTC
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    schemas: canary_shop
+    default-schema: canary_shop
+    create-schemas: true
+
+# IMPORTANT: app must be outside spring
+app:
+  jwt:
+    secret: ${JWT_SECRET}
+    expiry-minutes: 60
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus

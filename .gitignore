@@ -1,0 +1,29 @@
+cat > .gitignore <<'EOF'
+# Environment secrets
+.env
+.env.*
+!.env.example
+
+# Java / Maven
+target/
+.mvn/wrapper/maven-wrapper.jar
+
+# Node / Vite
+node_modules/
+dist/
+*.tsbuildinfo
+
+# IDE files
+.idea/
+.vscode/
+.classpath
+.project
+.settings/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+EOF
