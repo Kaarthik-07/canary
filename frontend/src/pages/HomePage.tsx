@@ -77,10 +77,11 @@ export function HomePage() {
         <div className="section-heading">
           <div>
             <h2>
-              THE COLLECTION <span>({data?.totalElements ?? '—'})</span>
+              THE COLLECTION — NEW SEASON{' '}
+              <span>({data?.totalElements ?? '—'})</span>
             </h2>
           </div>
-          <span className="eyebrow">CURATED / 2026</span>
+          <span className="eyebrow">CANARY EDITION / 2026</span>
         </div>
         <div className="filters">
           <label className="search-box">

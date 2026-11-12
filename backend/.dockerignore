@@ -1,0 +1,14 @@
+
+
+target/
+.git/
+.env
+.env.*
+!.env.example
+.envrc
+.direnv/
+.idea/
+.settings/
+.classpath
+.project
+*.log

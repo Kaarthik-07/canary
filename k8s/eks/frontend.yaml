@@ -1,0 +1,112 @@
+# Stable Frontend V1
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-stable
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend-stable
+  template:
+    metadata:
+      labels:
+        app: frontend-stable
+        version: v1
+    spec:
+      containers:
+        - name: frontend
+          image: 613473203546.dkr.ecr.ap-southeast-2.amazonaws.com/canary-frontend:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+
+---
+# Stable Frontend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-stable-service
+spec:
+  selector:
+    app: frontend-stable
+  ports:
+    - port: 80
+      targetPort: 80
+  type: ClusterIP
+
+---
+# Canary Frontend V2.2
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-canary
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend-canary
+  template:
+    metadata:
+      labels:
+        app: frontend-canary
+        version: v2.2
+    spec:
+      containers:
+        - name: frontend
+          image: 613473203546.dkr.ecr.ap-southeast-2.amazonaws.com/canary-frontend:v2.2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+
+---
+# Canary Frontend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-canary-service
+spec:
+  selector:
+    app: frontend-canary
+  ports:
+    - port: 80
+      targetPort: 80
+  type: ClusterIP
