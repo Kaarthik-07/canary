@@ -48,6 +48,8 @@ jobs:
 
       - name: Backend tests
         working-directory: backend
+        env:
+          JWT_SECRET: 'canary-shop-ci-test-secret-32-bytes-minimum'
         run: chmod +x mvnw && ./mvnw test
 
   publish:
