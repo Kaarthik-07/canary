@@ -12,6 +12,9 @@ permissions:
   contents: read
 
 jobs:
+  # -----------------------------------------------
+  # JOB 1: Validate frontend and backend
+  # -----------------------------------------------
   validate:
     name: Validate Application
     runs-on: ubuntu-latest
@@ -52,10 +55,14 @@ jobs:
           JWT_SECRET: 'canary-shop-ci-test-secret-32-bytes-minimum'
         run: chmod +x mvnw && ./mvnw test
 
+  # -----------------------------------------------
+  # JOB 2: Build and publish Docker images to ECR
+  # -----------------------------------------------
   publish:
     name: Build and Push Docker Images
     runs-on: ubuntu-latest
     needs: validate
+
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     permissions:
@@ -91,34 +98,90 @@ jobs:
           docker build -t "${REGISTRY}/canary-backend:${IMAGE_TAG}" ./backend
           docker push "${REGISTRY}/canary-backend:${IMAGE_TAG}"
 
+  # -----------------------------------------------
+  # JOB 3: Deploy images to Amazon EKS
+  # -----------------------------------------------
   deploy:
     name: Deploy to Amazon EKS
     runs-on: ubuntu-latest
     needs: publish
+
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    timeout-minutes: 20
+
+    concurrency:
+      group: canary-shop-eks-deploy
+      cancel-in-progress: false
 
     permissions:
       contents: read
       id-token: write
 
     steps:
+      # Authenticate GitHub Actions with AWS
       - name: Configure AWS credentials using OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
+      # Install kubectl
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
         with:
           version: 'v1.37.0'
 
+      # Temporarily allow the GitHub runner to reach EKS
+      - name: Temporarily allow GitHub runner IP
+        id: allowlist
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RUNNER_IP=$(curl -fsS https://checkip.amazonaws.com | tr -d '\n')
+
+          echo "GitHub runner public IP: ${RUNNER_IP}"
+
+          VPC_CONFIG=$(aws eks describe-cluster \
+            --name canary-shop-eks \
+            --region "${{ vars.AWS_REGION }}" \
+            --query 'cluster.resourcesVpcConfig' \
+            --output json)
+
+          ORIGINAL_VPC=$(jq -c \
+            '{endpointPublicAccess, endpointPrivateAccess, publicAccessCidrs}' \
+            <<< "$VPC_CONFIG")
+
+          # Save the original configuration for cleanup.
+          echo "original_vpc=${ORIGINAL_VPC}" >> "$GITHUB_OUTPUT"
+
+          # Add the runner IP without removing existing CIDRs.
+          jq --arg cidr "${RUNNER_IP}/32" \
+            '.publicAccessCidrs = ((.publicAccessCidrs + [$cidr]) | unique)' \
+            <<< "$ORIGINAL_VPC" > /tmp/eks-vpc-config.json
+
+          # Update EKS endpoint access.
+          aws eks update-cluster-config \
+            --name canary-shop-eks \
+            --region "${{ vars.AWS_REGION }}" \
+            --resources-vpc-config file:///tmp/eks-vpc-config.json
+
+          # Wait until EKS finishes updating.
+          aws eks wait cluster-active \
+            --name canary-shop-eks \
+            --region "${{ vars.AWS_REGION }}"
+
+          echo "GitHub runner IP is now allowed."
+
+      # Configure Kubernetes credentials
       - name: Configure EKS access
         run: |
           aws eks update-kubeconfig \
             --name canary-shop-eks \
             --region "${{ vars.AWS_REGION }}"
 
+      # Deploy backend image
       - name: Deploy backend
         run: |
           kubectl set image deployment/backend \
@@ -129,6 +192,7 @@ jobs:
             -n default \
             --timeout=300s
 
+      # Deploy canary frontend image
       - name: Deploy canary frontend
         run: |
           kubectl set image deployment/frontend-canary \
@@ -139,8 +203,31 @@ jobs:
             -n default \
             --timeout=180s
 
+      # Verify deployment status
       - name: Verify deployments
         run: |
           kubectl get deployments -n default -o wide
           kubectl get pods -n default -o wide
           kubectl get services -n default
+
+      # Restore original EKS public access settings
+      - name: Restore original EKS public access CIDRs
+        if: always() && steps.allowlist.outputs.original_vpc != ''
+        env:
+          ORIGINAL_VPC: ${{ steps.allowlist.outputs.original_vpc }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf '%s' "$ORIGINAL_VPC" > /tmp/eks-original-vpc.json
+
+          aws eks update-cluster-config \
+            --name canary-shop-eks \
+            --region "${{ vars.AWS_REGION }}" \
+            --resources-vpc-config file:///tmp/eks-original-vpc.json
+
+          aws eks wait cluster-active \
+            --name canary-shop-eks \
+            --region "${{ vars.AWS_REGION }}"
+
+          echo "Original EKS public access CIDRs restored."
