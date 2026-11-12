@@ -46,13 +46,13 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: "21"
           cache: maven
 
       - name: Backend tests
         working-directory: backend
         env:
-          JWT_SECRET: 'canary-shop-ci-test-secret-32-bytes-minimum'
+          JWT_SECRET: "canary-shop-ci-test-secret-32-bytes-minimum"
         run: chmod +x mvnw && ./mvnw test
 
   # -----------------------------------------------
@@ -130,9 +130,11 @@ jobs:
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
         with:
-          version: 'v1.37.0'
+          version: "v1.37.0"
 
-      # Temporarily allow the GitHub runner to reach EKS
+      # -----------------------------------------------
+      # TEMPORARILY ALLOW GITHUB RUNNER TO REACH EKS
+      # -----------------------------------------------
       - name: Temporarily allow GitHub runner IP
         id: allowlist
         shell: bash
@@ -161,56 +163,121 @@ jobs:
             '.publicAccessCidrs = ((.publicAccessCidrs + [$cidr]) | unique)' \
             <<< "$ORIGINAL_VPC" > /tmp/eks-vpc-config.json
 
-          # Update EKS endpoint access.
           aws eks update-cluster-config \
             --name canary-shop-eks \
             --region "${{ vars.AWS_REGION }}" \
             --resources-vpc-config file:///tmp/eks-vpc-config.json
 
-          # Wait until EKS finishes updating.
           aws eks wait cluster-active \
             --name canary-shop-eks \
             --region "${{ vars.AWS_REGION }}"
 
           echo "GitHub runner IP is now allowed."
 
-      # Configure Kubernetes credentials
+      # -----------------------------------------------
+      # CONFIGURE KUBERNETES ACCESS
+      # -----------------------------------------------
       - name: Configure EKS access
+        id: eks-access
         run: |
           aws eks update-kubeconfig \
             --name canary-shop-eks \
             --region "${{ vars.AWS_REGION }}"
 
-      # Deploy backend image
-      - name: Deploy backend
+      # -----------------------------------------------
+      # DEPLOY BACKEND
+      # -----------------------------------------------
+      - name: Update backend image
+        id: set-backend-image
         run: |
           kubectl set image deployment/backend \
             backend=${{ vars.ECR_REGISTRY }}/canary-backend:${{ github.sha }} \
             -n default
 
+      - name: Verify backend rollout
+        id: deploy-backend
+        run: |
           kubectl rollout status deployment/backend \
             -n default \
             --timeout=300s
 
-      # Deploy canary frontend image
-      - name: Deploy canary frontend
+      # -----------------------------------------------
+      # DEPLOY CANARY FRONTEND
+      # -----------------------------------------------
+      - name: Update canary frontend image
+        id: set-frontend-image
         run: |
           kubectl set image deployment/frontend-canary \
             frontend=${{ vars.ECR_REGISTRY }}/canary-frontend:${{ github.sha }} \
             -n default
 
+      - name: Verify frontend rollout
+        id: deploy-frontend
+        run: |
           kubectl rollout status deployment/frontend-canary \
             -n default \
             --timeout=180s
 
-      # Verify deployment status
+      # -----------------------------------------------
+      # VERIFY DEPLOYMENT STATUS
+      # -----------------------------------------------
       - name: Verify deployments
         run: |
           kubectl get deployments -n default -o wide
           kubectl get pods -n default -o wide
           kubectl get services -n default
 
-      # Restore original EKS public access settings
+      # -----------------------------------------------
+      # AUTOMATIC ROLLBACK
+      # -----------------------------------------------
+      - name: Roll back failed deployment
+        if: ${{ failure() && steps.eks-access.outcome == 'success' }}
+        env:
+          BACKEND_UPDATED: ${{ steps.set-backend-image.outcome }}
+          FRONTEND_UPDATED: ${{ steps.set-frontend-image.outcome }}
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          rollback_failed=0
+
+          rollback_deployment() {
+            local deployment="$1"
+
+            echo "Rolling back deployment/${deployment}..."
+
+            if ! kubectl rollout undo deployment/"${deployment}" -n default; then
+              echo "ERROR: Could not initiate rollback for ${deployment}"
+              rollback_failed=1
+              return
+            fi
+
+            if ! kubectl rollout status deployment/"${deployment}" \
+              -n default --timeout=300s; then
+              echo "ERROR: Rollback did not complete for ${deployment}"
+              rollback_failed=1
+            else
+              echo "Successfully rolled back ${deployment}."
+            fi
+          }
+
+          # Roll back only deployments whose image was updated.
+          if [[ "$BACKEND_UPDATED" == "success" ]]; then
+            rollback_deployment backend
+          fi
+
+          if [[ "$FRONTEND_UPDATED" == "success" ]]; then
+            rollback_deployment frontend-canary
+          fi
+
+          echo "Deployment state after rollback:"
+          kubectl get deployments -n default -o wide || rollback_failed=1
+
+          exit "$rollback_failed"
+
+      # -----------------------------------------------
+      # RESTORE ORIGINAL EKS ACCESS CONFIGURATION
+      # -----------------------------------------------
       - name: Restore original EKS public access CIDRs
         if: always() && steps.allowlist.outputs.original_vpc != ''
         env:
