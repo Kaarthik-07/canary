@@ -46,13 +46,13 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: '21'
           cache: maven
 
       - name: Backend tests
         working-directory: backend
         env:
-          JWT_SECRET: "canary-shop-ci-test-secret-32-bytes-minimum"
+          JWT_SECRET: 'canary-shop-ci-test-secret-32-bytes-minimum'
         run: chmod +x mvnw && ./mvnw test
 
   # -----------------------------------------------
@@ -130,7 +130,7 @@ jobs:
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
         with:
-          version: "v1.37.0"
+          version: 'v1.37.0'
 
       # -----------------------------------------------
       # TEMPORARILY ALLOW GITHUB RUNNER TO REACH EKS
@@ -217,7 +217,60 @@ jobs:
           kubectl rollout status deployment/frontend-canary \
             -n default \
             --timeout=180s
+      # -----------------------------------------------
+      # APPLICATION SMOKE TESTS THROUGH AWS ALB
+      # -----------------------------------------------
+      - name: Verify application through ALB
+        env:
+          ALB_URL: http://k8s-default-canarysh-775063b19d-262848391.ap-southeast-2.elb.amazonaws.com
+        shell: bash
+        run: |
+          set -euo pipefail
 
+          echo "Testing application homepage..."
+          curl --retry 5 --retry-delay 5 --retry-all-errors \
+            --fail --silent --show-error \
+            "${ALB_URL}/" -o /dev/null
+
+          echo "Testing products API..."
+          curl --retry 5 --retry-delay 5 --retry-all-errors \
+            --fail --silent --show-error \
+            "${ALB_URL}/api/products" -o /tmp/products.json
+
+          test -s /tmp/products.json
+          echo "Products API returned a non-empty response."
+
+          check_cohort() {
+            local user="$1"
+            local expected="$2"
+            local headers
+            headers=$(mktemp)
+
+            echo "Checking ${user}: expected ${expected}..."
+
+            if ! curl --retry 5 --retry-delay 5 --retry-all-errors \
+              --fail --silent --show-error \
+              -D "$headers" -o /dev/null \
+              "${ALB_URL}/?user=${user}"; then
+              rm -f "$headers"
+              return 1
+            fi
+
+            if ! grep -qi "^X-Canary-Cohort: ${expected}" "$headers"; then
+              echo "ERROR: Expected ${expected} cohort for ${user}."
+              cat "$headers"
+              rm -f "$headers"
+              return 1
+            fi
+
+            echo "${user} correctly routed to ${expected}."
+            rm -f "$headers"
+          }
+
+          check_cohort user1 CONTROL
+          check_cohort user10 CANARY
+
+          echo "All ALB smoke tests passed."
       # -----------------------------------------------
       # VERIFY DEPLOYMENT STATUS
       # -----------------------------------------------
