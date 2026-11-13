@@ -48,3 +48,9 @@ management:
     web:
       exposure:
         include: health,info,prometheus
+
+  endpoint:
+    health:
+      show-details: never
+    prometheus:
+      access: unrestricted
