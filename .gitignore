@@ -26,4 +26,4 @@ Thumbs.db
 
 # Logs
 *.log
-EOF
+backend/k8s/monitoring/alertmanager-config.local.yaml

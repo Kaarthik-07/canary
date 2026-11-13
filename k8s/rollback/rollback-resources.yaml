@@ -1,0 +1,79 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: canary-rollback
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: canary-rollback
+  namespace: default
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["cohort-router-config"]
+    verbs: ["get", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["cohort-router"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: canary-rollback
+  namespace: default
+subjects:
+  - kind: ServiceAccount
+    name: canary-rollback
+    namespace: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: canary-rollback
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: canary-rollback
+  namespace: default
+spec:
+  schedule: "*/1 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 180
+      template:
+        spec:
+          serviceAccountName: canary-rollback
+          restartPolicy: Never
+          containers:
+            - name: rollback
+              image: alpine:3.21
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  apk add --no-cache curl jq kubectl
+                  exec /bin/sh /scripts/rollback.sh
+              volumeMounts:
+                - name: rollback-script
+                  mountPath: /scripts
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 25m
+                  memory: 32Mi
+                limits:
+                  cpu: 200m
+                  memory: 128Mi
+          volumes:
+            - name: rollback-script
+              configMap:
+                name: canary-rollback-script
+                defaultMode: 0555
