@@ -30,7 +30,7 @@ if ! printf '%s' "$CURRENT_CONFIG" | grep -q 'frontend_canary'; then
     exit 0
 fi
 
-cat > /tmp/nginx.conf <<'NGINX'
+cat >/tmp/nginx.conf <<'NGINX'
 map "$cookie_cohort:$arg_user" $cohort {
     default CONTROL;
 }
@@ -67,7 +67,11 @@ server {
     location /actuator/ {
         proxy_pass http://backend;
     }
-
+    location = /_cohort {
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+        return 200 '{"cohort":"$cohort"}';
+    }
     location / {
         proxy_pass http://frontend_stable;
         proxy_set_header Host $host;
@@ -108,8 +112,8 @@ while [ "$i" -lt 60 ]; do
     READY=$(echo "$STATE" | cut -d: -f4)
 
     if [ "$OBSERVED" = "$GENERATION" ] &&
-       [ "$UPDATED" = "$EXPECTED" ] &&
-       [ "$READY" = "$EXPECTED" ]; then
+        [ "$UPDATED" = "$EXPECTED" ] &&
+        [ "$READY" = "$EXPECTED" ]; then
         echo "Router rollout completed."
         echo "ROLLBACK COMPLETED: traffic is routed to stable."
         exit 0
