@@ -8,6 +8,10 @@ rules:
     resources: ['deployments']
     verbs: ['get', 'list', 'watch', 'patch', 'update']
 
+  - apiGroups: ['apps']
+    resources: ['replicasets']
+    verbs: ['get', 'list', 'watch']
+
   - apiGroups: ['']
     resources: ['services', 'configmaps', 'pods']
     verbs: ['get', 'list', 'watch', 'patch', 'update']
