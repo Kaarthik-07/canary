@@ -46,7 +46,7 @@ export function OffersPage() {
         </div>
 
         <div className="empty-state">
-h3>NEW SEASON OFFERS ARE LIVE.</h3>
+          <h3>NEW SEASON OFFERS ARE LIVE.</h3>
           <p>
             You're part of our early-access release. Explore the new experience.
           </p>
