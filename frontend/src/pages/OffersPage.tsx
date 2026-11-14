@@ -60,7 +60,7 @@ export function OffersPage() {
         <div className="section-heading">
           <div>
             <h2>EXCLUSIVE OFFERS.</h2>
-            <p>Special deals, curated just for you.</p>
+            <p>Special deals, curated just for you.(nothing is there btw)</p>
           </div>
           <span className="eyebrow">CANARY EDITION / 2026</span>
         </div>
