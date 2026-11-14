@@ -1,8 +1,30 @@
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+
+type Cohort = 'CONTROL' | 'CANARY';
 
 export function OffersPage() {
-  const { user, loading } = useAuth();
+  const [cohort, setCohort] = useState<Cohort | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch('/_cohort', { cache: 'no-store' })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error('Unable to determine cohort');
+        }
+        return response.json();
+      })
+      .then((data: { cohort: Cohort }) => {
+        setCohort(data.cohort);
+      })
+      .catch((error) => {
+        console.error('Cohort lookup failed:', error);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  }, []);
 
   if (loading) {
     return (
@@ -12,9 +34,7 @@ export function OffersPage() {
     );
   }
 
-  const isCanary = user?.cohort === 'CANARY' && user.featureEnabled;
-
-  if (!isCanary) {
+  if (cohort !== 'CANARY') {
     return (
       <main className="page-shell">
         <section className="catalog-section">

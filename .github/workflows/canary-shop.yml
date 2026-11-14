@@ -119,14 +119,20 @@ jobs:
       id-token: write
 
     steps:
-      # Authenticate GitHub Actions with AWS
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      # -----------------------------------------------
+      # AWS AUTHENTICATION
+      # -----------------------------------------------
       - name: Configure AWS credentials using OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
-      # Install kubectl
+      # -----------------------------------------------
+      # INSTALL KUBECTL
+      # -----------------------------------------------
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
         with:
@@ -155,10 +161,8 @@ jobs:
             '{endpointPublicAccess, endpointPrivateAccess, publicAccessCidrs}' \
             <<< "$VPC_CONFIG")
 
-          # Save the original configuration for cleanup.
           echo "original_vpc=${ORIGINAL_VPC}" >> "$GITHUB_OUTPUT"
 
-          # Add the runner IP without removing existing CIDRs.
           jq --arg cidr "${RUNNER_IP}/32" \
             '.publicAccessCidrs = ((.publicAccessCidrs + [$cidr]) | unique)' \
             <<< "$ORIGINAL_VPC" > /tmp/eks-vpc-config.json
@@ -183,7 +187,18 @@ jobs:
           aws eks update-kubeconfig \
             --name canary-shop-eks \
             --region "${{ vars.AWS_REGION }}"
+      # -----------------------------------------------
+      # APPLY ROUTER CONFIGURATION
+      # -----------------------------------------------
+      - name: Apply cohort router configuration
+        run: |
+          kubectl apply -f k8s/eks/router/configmap.yaml -n default
 
+          kubectl rollout restart deployment/cohort-router -n default
+
+          kubectl rollout status deployment/cohort-router \
+            -n default \
+            --timeout=180s
       # -----------------------------------------------
       # DEPLOY BACKEND
       # -----------------------------------------------
@@ -211,12 +226,30 @@ jobs:
             frontend=${{ vars.ECR_REGISTRY }}/canary-frontend:${{ github.sha }} \
             -n default
 
-      - name: Verify frontend rollout
+      - name: Verify canary frontend rollout
         id: deploy-frontend
         run: |
           kubectl rollout status deployment/frontend-canary \
             -n default \
             --timeout=180s
+
+      # -----------------------------------------------
+      # DEPLOY UPDATED STABLE FRONTEND
+      # -----------------------------------------------
+      - name: Update stable frontend image
+        id: set-stable-frontend-image
+        run: |
+          kubectl set image deployment/frontend-stable \
+            frontend=${{ vars.ECR_REGISTRY }}/canary-frontend:${{ github.sha }} \
+            -n default
+
+      - name: Verify stable frontend rollout
+        id: deploy-stable-frontend
+        run: |
+          kubectl rollout status deployment/frontend-stable \
+            -n default \
+            --timeout=180s
+
       # -----------------------------------------------
       # APPLICATION SMOKE TESTS THROUGH AWS ALB
       # -----------------------------------------------
@@ -270,7 +303,24 @@ jobs:
           check_cohort user1 CONTROL
           check_cohort user10 CANARY
 
+          echo "Testing CONTROL cohort endpoint..."
+          CONTROL_RESPONSE=$(curl --retry 5 --retry-delay 5 --retry-all-errors \
+            --fail --silent --show-error \
+            "${ALB_URL}/_cohort?user=user1")
+
+          echo "$CONTROL_RESPONSE"
+          echo "$CONTROL_RESPONSE" | grep -q '"cohort":"CONTROL"'
+
+          echo "Testing CANARY cohort endpoint..."
+          CANARY_RESPONSE=$(curl --retry 5 --retry-delay 5 --retry-all-errors \
+            --fail --silent --show-error \
+            "${ALB_URL}/_cohort?user=user10")
+
+          echo "$CANARY_RESPONSE"
+          echo "$CANARY_RESPONSE" | grep -q '"cohort":"CANARY"'
+
           echo "All ALB smoke tests passed."
+
       # -----------------------------------------------
       # VERIFY DEPLOYMENT STATUS
       # -----------------------------------------------
@@ -288,6 +338,7 @@ jobs:
         env:
           BACKEND_UPDATED: ${{ steps.set-backend-image.outcome }}
           FRONTEND_UPDATED: ${{ steps.set-frontend-image.outcome }}
+          STABLE_FRONTEND_UPDATED: ${{ steps.set-stable-frontend-image.outcome }}
         shell: bash
         run: |
           set -uo pipefail
@@ -314,13 +365,16 @@ jobs:
             fi
           }
 
-          # Roll back only deployments whose image was updated.
           if [[ "$BACKEND_UPDATED" == "success" ]]; then
             rollback_deployment backend
           fi
 
           if [[ "$FRONTEND_UPDATED" == "success" ]]; then
             rollback_deployment frontend-canary
+          fi
+
+          if [[ "$STABLE_FRONTEND_UPDATED" == "success" ]]; then
+            rollback_deployment frontend-stable
           fi
 
           echo "Deployment state after rollback:"
