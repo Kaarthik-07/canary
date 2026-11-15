@@ -1,0 +1,20 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: canary-rollback-test
+  namespace: monitoring
+  labels:
+    release: monitoring
+spec:
+  groups:
+    - name: canary-rollback-test
+      rules:
+        - alert: CanaryRollbackTest
+          expr: vector(1)
+          for: 0s
+          labels:
+            severity: test
+            rollback: "true"
+          annotations:
+            summary: "Synthetic canary rollback test"
+            description: "Testing automatic stable traffic routing."
