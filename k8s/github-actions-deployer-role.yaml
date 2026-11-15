@@ -1,0 +1,42 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: canary-shop-deployer
+  namespace: default
+rules:
+  # Deployment updates, rollout monitoring and rollback
+  - apiGroups: ['apps']
+    resources:
+      - deployments
+      - replicasets
+    verbs:
+      - get
+      - list
+      - watch
+      - patch
+
+  # Pod inspection during deployment verification
+  - apiGroups: ['']
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+
+  # Service inspection
+  - apiGroups: ['']
+    resources:
+      - services
+    verbs:
+      - get
+      - list
+
+  # Router ConfigMap management
+  - apiGroups: ['']
+    resources:
+      - configmaps
+    verbs:
+      - get
+      - create
+      - patch
