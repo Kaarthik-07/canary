@@ -51,10 +51,13 @@ jobs:
 
       - name: Backend tests
         working-directory: backend
-        env:
-          JWT_SECRET: 'canary-shop-ci-test-secret-32-bytes-minimum'
-        run: chmod +x mvnw && ./mvnw test
-
+        shell: bash
+        run: |
+          set -euo pipefail
+          JWT_SECRET="$(openssl rand -hex 32)"
+          export JWT_SECRET
+          chmod +x mvnw
+          ./mvnw test
   # -----------------------------------------------
   # JOB 2: Build and publish Docker images to ECR
   # -----------------------------------------------
@@ -232,30 +235,12 @@ jobs:
           kubectl rollout status deployment/frontend-canary \
             -n default \
             --timeout=180s
-
-      # -----------------------------------------------
-      # DEPLOY UPDATED STABLE FRONTEND
-      # -----------------------------------------------
-      - name: Update stable frontend image
-        id: set-stable-frontend-image
-        run: |
-          kubectl set image deployment/frontend-stable \
-            frontend=${{ vars.ECR_REGISTRY }}/canary-frontend:${{ github.sha }} \
-            -n default
-
-      - name: Verify stable frontend rollout
-        id: deploy-stable-frontend
-        run: |
-          kubectl rollout status deployment/frontend-stable \
-            -n default \
-            --timeout=180s
-
       # -----------------------------------------------
       # APPLICATION SMOKE TESTS THROUGH AWS ALB
       # -----------------------------------------------
       - name: Verify application through ALB
         env:
-          ALB_URL: http://k8s-default-canarysh-775063b19d-262848391.ap-southeast-2.elb.amazonaws.com
+          ALB_URL: http://k8s-default-canarysh-775063b19d-143114923.ap-southeast-2.elb.amazonaws.com
         shell: bash
         run: |
           set -euo pipefail
@@ -320,7 +305,67 @@ jobs:
           echo "$CANARY_RESPONSE" | grep -q '"cohort":"CANARY"'
 
           echo "All ALB smoke tests passed."
+      # -----------------------------------------------
+      # SYNTHETIC USER JOURNEY — CANARY VALIDATION GATE
+      # -----------------------------------------------
+      - name: Setup Node.js for synthetic tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Run CANARY synthetic user journey
+        working-directory: frontend
+        env:
+          BASE_URL: http://k8s-default-canarysh-775063b19d-143114923.ap-southeast-2.elb.amazonaws.com
+          E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
+          E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$E2E_EMAIL" || -z "$E2E_PASSWORD" ]]; then
+            echo "ERROR: Synthetic account GitHub secrets are missing."
+            exit 1
+          fi
+
+          npx playwright test
+
+      - name: Upload synthetic test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canary-synthetic-test-${{ github.sha }}
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+      # -----------------------------------------------
+      # PROMOTE VERIFIED CANARY IMAGE TO STABLE
+      # -----------------------------------------------
+      - name: Update stable frontend image
+        id: set-stable-frontend-image
+        run: |
+          kubectl set image deployment/frontend-stable \
+            frontend=${{ vars.ECR_REGISTRY }}/canary-frontend:${{ github.sha }} \
+            -n default
+
+      - name: Verify stable frontend rollout
+        id: deploy-stable-frontend
+        run: |
+          kubectl rollout status deployment/frontend-stable \
+            -n default \
+            --timeout=180s
       # -----------------------------------------------
       # VERIFY DEPLOYMENT STATUS
       # -----------------------------------------------

@@ -3,3 +3,10 @@ dist
 .env
 .env.local
 *.log
+
+# Playwright
+playwright-report/
+test-results/
+
+# Synthetic test credentials
+.env.e2e

@@ -7,7 +7,8 @@
     "dev": "vite --host 0.0.0.0",
     "typecheck": "tsc --noEmit",
     "build": "tsc -b && vite build",
-    "preview": "vite preview --host 0.0.0.0"
+    "preview": "vite preview --host 0.0.0.0",
+    "test:e2e": "node --env-file=.env.e2e ./node_modules/@playwright/test/cli.js test"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -21,6 +22,7 @@
     "zod": "^4.1.12"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.1",
     "@tailwindcss/vite": "^4.1.17",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
